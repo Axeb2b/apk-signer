@@ -5,10 +5,12 @@ ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update && apt-get install -y \
     openjdk-17-jdk \
     wget \
+    curl \
     unzip \
     python3 \
     python3-pip \
     git \
+    ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
 # Install apktool
@@ -24,8 +26,13 @@ RUN wget https://dl.google.com/android/repository/build-tools_r34-linux.zip && \
     ln -s /opt/android/build-tools/zipalign /usr/local/bin/zipalign && \
     rm build-tools_r34-linux.zip
 
-# Download AndResGuard jar (use -O for output file)
-RUN wget https://github.com/shwenzhang/AndResGuard/releases/download/1.2.21/AndResGuard-cli-1.2.21.jar -O /opt/AndResGuard.jar
+# Download AndResGuard with retry and user-agent
+RUN curl -L --retry 5 --retry-delay 2 --user-agent "Mozilla/5.0" \
+    -o /opt/AndResGuard.jar \
+    https://github.com/shwenzhang/AndResGuard/releases/download/1.2.21/AndResGuard-cli-1.2.21.jar
+
+# Verify download
+RUN test -f /opt/AndResGuard.jar || (echo "Download failed" && exit 1)
 
 # Copy bot files
 WORKDIR /app
@@ -33,7 +40,6 @@ COPY requirements.txt .
 RUN pip3 install --no-cache-dir -r requirements.txt
 COPY bot.py .
 
-# Create config directory for AndResGuard
 RUN mkdir /app/andresguard-config
 
 CMD ["python3", "bot.py"]
