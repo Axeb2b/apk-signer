@@ -11,7 +11,7 @@ RUN apt-get update && apt-get install -y \
     git \
     && rm -rf /var/lib/apt/lists/*
 
-# Install apktool (for dummy asset addition later)
+# Install apktool
 RUN wget https://raw.githubusercontent.com/iBotPeaches/Apktool/master/scripts/linux/apktool -O /usr/local/bin/apktool && \
     chmod +x /usr/local/bin/apktool && \
     wget https://github.com/iBotPeaches/Apktool/releases/download/v2.9.3/apktool_2.9.3.jar -O /usr/local/bin/apktool.jar && \
@@ -24,7 +24,7 @@ RUN wget https://dl.google.com/android/repository/build-tools_r34-linux.zip && \
     ln -s /opt/android/build-tools/zipalign /usr/local/bin/zipalign && \
     rm build-tools_r34-linux.zip
 
-# Download AndResGuard jar (latest release)
+# Download AndResGuard jar (use -O for output file)
 RUN wget https://github.com/shwenzhang/AndResGuard/releases/download/1.2.21/AndResGuard-cli-1.2.21.jar -O /opt/AndResGuard.jar
 
 # Copy bot files
