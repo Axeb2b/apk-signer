@@ -8,41 +8,88 @@ import logging
 from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, filters
 
-TOKEN = os.environ.get("BOT_TOKEN")
+TOKEN = os.environ.get('BOT_TOKEN')
+if not TOKEN:
+    raise Exception("BOT_TOKEN not set")
+
 logging.basicConfig(level=logging.INFO)
 
-def random_hex(length=8):
-    return ''.join(random.choices(string.hexdigits.lower(), k=length))
+def random_hex(n=6):
+    return ''.join(random.choices(string.ascii_lowercase + string.digits, k=n))
+
+AND_RES_GUARD_JAR = "/opt/AndResGuard.jar"
 
 async def start(update: Update, context):
-    await update.message.reply_text("✅ Bot is alive! Send me an APK file to randomize.")
+    await update.message.reply_text("Send me an APK. I will obfuscate resources (AndResGuard), add random dummy, and random sign.")
 
 async def handle_apk(update: Update, context):
     if not update.message.document:
         return
+    msg = await update.message.reply_text("Downloading APK...")
     file = await update.message.document.get_file()
-    input_apk = f"in_{random_hex(6)}.apk"
+    input_apk = f"in_{random_hex()}.apk"
     await file.download_to_drive(input_apk)
-    await update.message.reply_text("⏳ Processing APK... (may take 20-40 sec)")
 
     try:
-        # Decompile
+        # 1. AndResGuard
+        await msg.edit_text("Obfuscating resources with AndResGuard...")
         work_dir = tempfile.mkdtemp()
-        dec_dir = os.path.join(work_dir, "dec")
-        subprocess.run(["apktool", "d", input_apk, "-o", dec_dir], check=True, capture_output=True)
+        out_dir = os.path.join(work_dir, "andres_out")
+        os.makedirs(out_dir, exist_ok=True)
 
-        # Add dummy asset
+        config = """<?xml version="1.0" encoding="UTF-8"?>
+<resguard>
+    <issue id="whitelist" isactive="true">
+        <path value="R.drawable.ic_launcher" />
+        <path value="R.mipmap.ic_launcher" />
+        <path value="R.string.app_name" />
+    </issue>
+    <issue id="compress" isactive="true">
+        <path value="*.png" />
+        <path value="*.jpg" />
+        <path value="*.jpeg" />
+        <path value="*.gif" />
+    </issue>
+    <issue id="use7zip" isactive="true" />
+    <issue id="usesign" isactive="false" />
+    <issue id="keeproot" isactive="false" />
+    <issue id="mergeres" isactive="true" />
+</resguard>"""
+        config_path = os.path.join(work_dir, "config.xml")
+        with open(config_path, "w") as f:
+            f.write(config)
+
+        subprocess.run([
+            "java", "-jar", AND_RES_GUARD_JAR,
+            input_apk,
+            "-config", config_path,
+            "-out", out_dir
+        ], check=True, capture_output=True)
+
+        # Find unsigned obfuscated APK
+        obf_apk = None
+        for f in os.listdir(out_dir):
+            if f.endswith(".apk") and "unsigned" in f:
+                obf_apk = os.path.join(out_dir, f)
+                break
+        if not obf_apk:
+            raise Exception("AndResGuard output not found")
+
+        # 2. Decompile and add random dummy asset
+        await msg.edit_text("Adding random dummy asset...")
+        dec_dir = os.path.join(work_dir, "dec")
+        subprocess.run(["apktool", "d", obf_apk, "-o", dec_dir], check=True, capture_output=True)
         assets_dir = os.path.join(dec_dir, "assets")
         os.makedirs(assets_dir, exist_ok=True)
-        dummy_name = f"r_{random_hex(8)}.bin"
-        with open(os.path.join(assets_dir, dummy_name), "wb") as f:
-            f.write(os.urandom(random.randint(64, 1024)))
+        dummy = f"r_{random_hex(8)}.bin"
+        with open(os.path.join(assets_dir, dummy), "wb") as f:
+            f.write(os.urandom(256))
 
-        # Recompile (unsigned)
-        unsigned_apk = os.path.join(work_dir, "unsigned.apk")
-        subprocess.run(["apktool", "b", dec_dir, "-o", unsigned_apk], check=True, capture_output=True)
+        recompiled = os.path.join(work_dir, "recompiled.apk")
+        subprocess.run(["apktool", "b", dec_dir, "-o", recompiled], check=True, capture_output=True)
 
-        # Random sign
+        # 3. Random sign + zipalign
+        await msg.edit_text("Random signing...")
         keystore = os.path.join(work_dir, "random.keystore")
         alias = "rnd"
         storepass = random_hex(12)
@@ -53,36 +100,36 @@ async def handle_apk(update: Update, context):
             "-storepass", storepass, "-keypass", storepass
         ], check=True, capture_output=True)
 
-        signed_apk = os.path.join(work_dir, "signed.apk")
+        signed = os.path.join(work_dir, "signed.apk")
         subprocess.run([
             "jarsigner", "-verbose", "-sigalg", "SHA1withRSA", "-digestalg", "SHA1",
             "-keystore", keystore, "-storepass", storepass, "-keypass", storepass,
-            unsigned_apk, alias
+            recompiled, alias
         ], check=True, capture_output=True)
 
-        # Align
         final_apk = os.path.join(work_dir, "final.apk")
-        subprocess.run(["zipalign", "-v", "-p", "4", signed_apk, final_apk], check=True, capture_output=True)
+        try:
+            subprocess.run(["zipalign", "-v", "-p", "4", signed, final_apk], check=True, capture_output=True)
+        except FileNotFoundError:
+            final_apk = signed
 
-        # Send back
-        with open(final_apk, 'rb') as f:
-            await update.message.reply_document(document=f, filename=f"randomized_{random_hex(6)}.apk")
+        await msg.edit_text("Sending back...")
+        with open(final_apk, "rb") as f:
+            await update.message.reply_document(document=f, filename=f"randomized_{random_hex()}.apk")
 
     except Exception as e:
-        await update.message.reply_text(f"❌ Error: {str(e)}")
+        await msg.edit_text(f"Error: {str(e)}")
         logging.exception("APK processing failed")
     finally:
-        # Cleanup
-        if os.path.exists(input_apk):
-            os.remove(input_apk)
-        if os.path.exists(work_dir):
-            shutil.rmtree(work_dir, ignore_errors=True)
+        shutil.rmtree(work_dir, ignore_errors=True)
+        os.remove(input_apk)
+        await msg.delete()
 
 def main():
     app = Application.builder().token(TOKEN).build()
     app.add_handler(CommandHandler("start", start))
     app.add_handler(MessageHandler(filters.Document.APK, handle_apk))
-    print("Bot started (lightweight version)...")
+    print("Bot started (no Flask, pure polling). Send APK via Telegram.")
     app.run_polling()
 
 if __name__ == "__main__":
