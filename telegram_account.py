@@ -243,7 +243,10 @@ async def cmd_import_session(args: argparse.Namespace) -> None:
 
 
 async def cmd_login(_: argparse.Namespace) -> None:
-    """OTP-only login (no QR). Sends code, or verifies if TG_CODE is set."""
+    """Login: import session string, verify OTP, or send code."""
+    if os.environ.get("TG_SESSION_STRING", "").strip():
+        await cmd_import_session(_)
+        return
     if os.environ.get("TG_CODE", "").strip():
         await cmd_verify_code(_)
         return
