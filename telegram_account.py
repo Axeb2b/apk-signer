@@ -80,7 +80,7 @@ async def _session():
         await client.disconnect()
 
 
-async def cmd_login(_: argparse.Namespace) -> None:
+async def cmd_send_code(_: argparse.Namespace) -> None:
     phone = os.environ.get("TG_PHONE", "").strip() or _prompt("Phone number (international, e.g. +15551234567)")
 
     async with _session() as client:
@@ -89,23 +89,45 @@ async def cmd_login(_: argparse.Namespace) -> None:
             print(f"Already logged in as {me.first_name} (@{me.username or 'no-username'}) id={me.id}")
             return
 
-        await client.send_code_request(phone)
-        print(
-            "Login code sent to your Telegram app (not SMS). "
-            "Open Telegram and check for a message from 'Telegram' with a 5-digit code.",
-            file=sys.stderr,
-        )
-        code = os.environ.get("TG_CODE", "").strip() or _prompt("Login code from Telegram app")
+        sent = await client.send_code_request(phone)
+        delivery = type(sent.type).__name__
+        print(f"OTP sent to {phone}")
+        print(f"Delivery: {delivery}")
+        if "App" in delivery:
+            print("Check the Telegram app on your phone for a message from 'Telegram' (not SMS).")
+        else:
+            print("Check SMS or Telegram for your login code.")
+        print("Then run: TG_CODE=<code> python3 telegram_account.py verify-code")
+
+
+async def cmd_verify_code(_: argparse.Namespace) -> None:
+    phone = os.environ.get("TG_PHONE", "").strip() or _prompt("Phone number (international, e.g. +15551234567)")
+    code = os.environ.get("TG_CODE", "").strip() or _prompt("Login code from Telegram")
+
+    async with _session() as client:
+        if await client.is_user_authorized():
+            me = await client.get_me()
+            print(f"Already logged in as {me.first_name} (@{me.username or 'no-username'}) id={me.id}")
+            return
 
         try:
             await client.sign_in(phone=phone, code=code)
         except SessionPasswordNeededError:
-            password = os.environ.get("TG_PASSWORD", "").strip() or _prompt("Two-step verification password", secret=True)
+            password = os.environ.get("TG_PASSWORD", "").strip() or _prompt(
+                "Two-step verification password", secret=True
+            )
             await client.sign_in(password=password)
 
         me = await client.get_me()
         print(f"Logged in as {me.first_name} (@{me.username or 'no-username'}) id={me.id}")
         print(f"Session saved to {SESSION_PATH}.session")
+
+
+async def cmd_login(_: argparse.Namespace) -> None:
+    if os.environ.get("TG_CODE", "").strip():
+        await cmd_verify_code(_)
+        return
+    await cmd_send_code(_)
 
 
 async def cmd_logout(_: argparse.Namespace) -> None:
@@ -243,6 +265,8 @@ def build_parser() -> argparse.ArgumentParser:
     sub = parser.add_subparsers(dest="command", required=True)
 
     sub.add_parser("login", help="Authenticate with phone + OTP and save session")
+    sub.add_parser("send-code", help="Send OTP to phone (step 1)")
+    sub.add_parser("verify-code", help="Complete login with TG_CODE (step 2)")
     sub.add_parser("logout", help="Log out and remove local session")
     sub.add_parser("me", help="Show account profile")
     sub.add_parser("sessions", help="List active account sessions")
@@ -282,6 +306,8 @@ async def main() -> None:
     args = parser.parse_args()
     handlers = {
         "login": cmd_login,
+        "send-code": cmd_send_code,
+        "verify-code": cmd_verify_code,
         "logout": cmd_logout,
         "me": cmd_me,
         "sessions": cmd_sessions,
