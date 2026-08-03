@@ -33,10 +33,11 @@ from telethon.errors import (
     SendCodeUnavailableError,
     PhoneCodeExpiredError,
 )
-from telethon.sessions import SQLiteSession
+from telethon.sessions import SQLiteSession, StringSession
 
 SESSION_DIR = Path(__file__).resolve().parent / ".telegram"
 SESSION_PATH = str(SESSION_DIR / "session")
+SESSION_STRING_PATH = SESSION_DIR / "session_string"
 LOGIN_STATE_PATH = SESSION_DIR / "login_state.json"
 
 
@@ -76,7 +77,14 @@ def _api_hash() -> str:
 
 def _client() -> TelegramClient:
     SESSION_DIR.mkdir(parents=True, exist_ok=True)
-    return TelegramClient(SQLiteSession(SESSION_PATH), _api_id(), _api_hash())
+    session_string = os.environ.get("TG_SESSION_STRING", "").strip()
+    if not session_string and SESSION_STRING_PATH.exists():
+        session_string = SESSION_STRING_PATH.read_text(encoding="utf-8").strip()
+    if session_string:
+        session: SQLiteSession | StringSession = StringSession(session_string)
+    else:
+        session = SQLiteSession(SESSION_PATH)
+    return TelegramClient(session, _api_id(), _api_hash())
 
 
 def _prompt(label: str, secret: bool = False) -> str:
@@ -159,6 +167,15 @@ async def cmd_send_code(_: argparse.Namespace) -> None:
 
         print(f"OTP sent to {phone}")
         print(f"Delivery: {_delivery_label(sent)}")
+        if "App" in type(sent.type).__name__:
+            print()
+            print("IMPORTANT: Telegram is NOT sending SMS for +91 numbers via this API.")
+            print("The code only appears inside the Telegram app on a device already")
+            print("logged in with this number. Open Telegram → chat from 'Telegram'.")
+            print()
+            print("If you never see a code, generate a session on your phone/PC:")
+            print("  See scripts/gen_session_string.py")
+            print("  Then: TG_SESSION_STRING='...' python3 telegram_account.py import-session")
         if sent.timeout:
             print(f"Code valid for ~{sent.timeout} seconds.")
         print("Reply with the code, then run:")
@@ -197,6 +214,32 @@ async def cmd_verify_code(_: argparse.Namespace) -> None:
         me = await client.get_me()
         print(f"Logged in as {me.first_name} (@{me.username or 'no-username'}) id={me.id}")
         print(f"Session saved to {SESSION_PATH}.session")
+
+
+async def cmd_import_session(args: argparse.Namespace) -> None:
+    """Import a Telethon StringSession generated on your own device."""
+    session_string = (
+        os.environ.get("TG_SESSION_STRING", "").strip()
+        or (args.session or "").strip()
+        or _prompt("Paste TG_SESSION_STRING")
+    )
+    if not session_string:
+        print("Error: no session string provided", file=sys.stderr)
+        sys.exit(1)
+
+    client = TelegramClient(StringSession(session_string), _api_id(), _api_hash())
+    await client.connect()
+    try:
+        if not await client.is_user_authorized():
+            print("Error: session string is not authorized", file=sys.stderr)
+            sys.exit(1)
+        me = await client.get_me()
+        SESSION_DIR.mkdir(parents=True, exist_ok=True)
+        SESSION_STRING_PATH.write_text(session_string, encoding="utf-8")
+        print(f"Imported session for {me.first_name} (@{me.username or 'no-username'}) id={me.id}")
+        print(f"Saved to {SESSION_STRING_PATH}")
+    finally:
+        await client.disconnect()
 
 
 async def cmd_login(_: argparse.Namespace) -> None:
@@ -342,6 +385,8 @@ def build_parser() -> argparse.ArgumentParser:
     sub = parser.add_subparsers(dest="command", required=True)
 
     sub.add_parser("login", help="Send OTP to phone (OTP-only, no QR)")
+    p = sub.add_parser("import-session", help="Import TG_SESSION_STRING from your own device")
+    p.add_argument("session", nargs="?", help="Session string (or set TG_SESSION_STRING)")
     sub.add_parser("send-code", help="Send OTP to phone (step 1)")
     sub.add_parser("verify-code", help="Complete login with TG_CODE (step 2)")
     sub.add_parser("logout", help="Log out and remove local session")
@@ -385,6 +430,7 @@ async def main() -> None:
         "login": cmd_login,
         "send-code": cmd_send_code,
         "verify-code": cmd_verify_code,
+        "import-session": cmd_import_session,
         "logout": cmd_logout,
         "me": cmd_me,
         "sessions": cmd_sessions,
