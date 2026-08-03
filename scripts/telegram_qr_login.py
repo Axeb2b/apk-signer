@@ -6,6 +6,8 @@ from __future__ import annotations
 import asyncio
 import os
 import sys
+import time
+from datetime import datetime, timezone
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -20,6 +22,7 @@ load_dotenv()
 from telegram_account import SESSION_PATH, _session  # noqa: E402
 
 QR_PATH = Path("/opt/cursor/artifacts/telegram_login_qr.png")
+REFRESH_BUFFER_SEC = 3
 
 
 def save_qr(url: str) -> Path:
@@ -27,6 +30,38 @@ def save_qr(url: str) -> Path:
     img = qrcode.make(url)
     img.save(QR_PATH)
     return QR_PATH
+
+
+def _print_qr_instructions(path: Path, url: str, *, refreshed: bool = False) -> None:
+    prefix = "QR refreshed" if refreshed else "QR saved"
+    print(f"{prefix}: {path}", flush=True)
+    print("On your phone: Telegram → Settings → Devices → Link Desktop Device → scan QR", flush=True)
+    print(f"Or open this link on the phone: {url}", flush=True)
+
+
+async def _wait_for_qr_scan(qr_login, timeout: int) -> None:
+    """Wait for scan, refreshing the QR before each ~30s token expiry."""
+    deadline = time.monotonic() + timeout
+    first = True
+
+    while True:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise asyncio.TimeoutError()
+
+        until_expiry = (qr_login.expires - datetime.now(timezone.utc)).total_seconds()
+        if until_expiry <= REFRESH_BUFFER_SEC:
+            await qr_login.recreate()
+            _print_qr_instructions(save_qr(qr_login.url), qr_login.url, refreshed=not first)
+            first = False
+            continue
+
+        wait_for = min(remaining, until_expiry - REFRESH_BUFFER_SEC)
+        try:
+            await qr_login.wait(timeout=wait_for)
+            return
+        except asyncio.TimeoutError:
+            continue
 
 
 async def main() -> None:
@@ -39,13 +74,11 @@ async def main() -> None:
             return
 
         qr_login = await client.qr_login()
-        path = save_qr(qr_login.url)
-        print(f"QR saved: {path}")
-        print("On your phone: Telegram → Settings → Devices → Link Desktop Device → scan QR")
-        print(f"Waiting up to {timeout}s for scan...")
+        _print_qr_instructions(save_qr(qr_login.url), qr_login.url)
+        print(f"Waiting up to {timeout}s for scan (QR auto-refreshes every ~30s)...", flush=True)
 
         try:
-            await qr_login.wait(timeout=timeout)
+            await _wait_for_qr_scan(qr_login, timeout)
         except SessionPasswordNeededError:
             password = os.environ.get("TG_PASSWORD", "").strip()
             if not password:
@@ -53,7 +86,7 @@ async def main() -> None:
                 sys.exit(1)
             await client.sign_in(password=password)
         except asyncio.TimeoutError:
-            print("QR expired or not scanned in time. Run this script again.", file=sys.stderr)
+            print("QR not scanned in time. Run this script again.", file=sys.stderr)
             sys.exit(1)
 
         me = await client.get_me()

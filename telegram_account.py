@@ -27,11 +27,12 @@ from env_loader import load_dotenv
 
 load_dotenv()
 
-from telethon import TelegramClient, functions, types
+from telethon import TelegramClient, functions, types, utils
 from telethon.errors import (
     SessionPasswordNeededError,
     SendCodeUnavailableError,
     PhoneCodeExpiredError,
+    PhoneCodeInvalidError,
 )
 from telethon.sessions import SQLiteSession, StringSession
 
@@ -65,6 +66,14 @@ def _require_env(name: str) -> str:
         print(f"Error: {name} is not set. Add it to .env or export it.", file=sys.stderr)
         sys.exit(1)
     return value
+
+
+def _normalize_phone(phone: str) -> str:
+    normalized = utils.parse_phone(phone.strip())
+    if not normalized:
+        print(f"Error: invalid phone number: {phone!r}", file=sys.stderr)
+        sys.exit(1)
+    return normalized
 
 
 def _api_id() -> int:
@@ -127,11 +136,11 @@ def _delivery_label(sent: types.auth.SentCode) -> str:
 
 async def _send_code_prefer_sms(client: TelegramClient, phone: str) -> types.auth.SentCode:
     """Request OTP; prefer SMS/call over in-app delivery when Telegram allows it."""
+    phone = _normalize_phone(phone)
     settings = types.CodeSettings(
         allow_flashcall=True,
         allow_missed_call=True,
         allow_firebase=True,
-        allow_app_hash=False,
     )
     try:
         sent = await client(
@@ -184,6 +193,7 @@ async def cmd_send_code(_: argparse.Namespace) -> None:
 
 async def cmd_verify_code(_: argparse.Namespace) -> None:
     phone = os.environ.get("TG_PHONE", "").strip() or _prompt("Phone number (international, e.g. +15551234567)")
+    phone = _normalize_phone(phone)
     code = os.environ.get("TG_CODE", "").strip() or _prompt("Login code from Telegram")
 
     async with _session() as client:
@@ -198,8 +208,25 @@ async def cmd_verify_code(_: argparse.Namespace) -> None:
             print("No pending OTP session. Run: python3 telegram_account.py send-code", file=sys.stderr)
             sys.exit(1)
 
+        state_phone = state.get("phone", "")
+        if state_phone and _normalize_phone(state_phone) != phone:
+            print(
+                f"Phone mismatch: send-code used {state_phone!r} but TG_PHONE is {phone!r}. "
+                "Run send-code again with the same phone.",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+
+        client._phone_code_hash[phone] = phone_code_hash
         try:
             await client.sign_in(phone=phone, code=code, phone_code_hash=phone_code_hash)
+        except PhoneCodeInvalidError:
+            print(
+                "Invalid code. Check Telegram → chat from 'Telegram' on your phone, "
+                "then run: TG_CODE=<code> python3 telegram_account.py verify-code",
+                file=sys.stderr,
+            )
+            sys.exit(1)
         except PhoneCodeExpiredError:
             print("Code expired. Run: python3 telegram_account.py login", file=sys.stderr)
             _clear_login_state()
