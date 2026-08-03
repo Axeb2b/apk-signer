@@ -27,6 +27,31 @@ pip3 install --user -r requirements.txt
 
 **AndResGuard note:** The `Dockerfile` downloads `AndResGuard-cli-1.2.21.jar`, but that release asset no longer exists on GitHub (404). The install script copies `AndResGuard-cli-1.2.15.jar` from the upstream repo's `tool_output/` directory instead. The config embedded in `bot.py` uses a newer `<resguard>` XML format that may not be fully compatible with 1.2.15 (whitelist paths need full package names; `use7zip` without `usesign` fails). Use `scripts/verify_pipeline.sh` to test the toolchain with a compatible config.
 
+### Telegram user account (full MTProto)
+
+`telegram_account.py` manages a **user account** (not the bot) via Telethon using `TG_API_ID` / `TG_API_HASH`.
+
+```bash
+set -a && source .env && set +a
+pip3 install --user -r requirements.txt
+
+# First-time login (interactive, or set TG_PHONE / TG_CODE / TG_PASSWORD)
+python3 telegram_account.py login
+
+# Account management
+python3 telegram_account.py me
+python3 telegram_account.py dialogs
+python3 telegram_account.py contacts
+python3 telegram_account.py history @username --limit 20
+python3 telegram_account.py send @username "Hello"
+python3 telegram_account.py read @username
+python3 telegram_account.py sessions
+python3 telegram_account.py profile --about "New bio"
+python3 telegram_account.py logout
+```
+
+Session files are stored in `.telegram/` (gitignored). The bot (`bot.py`) and user account manager are separate: the bot uses `BOT_TOKEN`; the account manager uses API id/hash + phone login.
+
 ### Running the bot
 
 Credentials live in `.env` (gitignored). Copy `.env.example` if needed:
@@ -71,7 +96,10 @@ Note: the Docker build will fail at the AndResGuard download step unless the Doc
 | Variable | Required | Description |
 |----------|----------|-------------|
 | `BOT_TOKEN` | Yes | Telegram bot token from BotFather |
-| `TG_API_ID` | No* | Telegram API ID from [my.telegram.org](https://my.telegram.org) |
-| `TG_API_HASH` | No* | Telegram API hash from [my.telegram.org](https://my.telegram.org) |
+| `TG_API_ID` | Yes* | Telegram API ID from [my.telegram.org](https://my.telegram.org) |
+| `TG_API_HASH` | Yes* | Telegram API hash from [my.telegram.org](https://my.telegram.org) |
+| `TG_PHONE` | Login | Phone number for `telegram_account.py login` (international format) |
+| `TG_CODE` | Login | OTP code (optional; prompts if unset) |
+| `TG_PASSWORD` | Login | 2FA password (optional; prompts if needed) |
 
-\*Not used by `bot.py` today (Bot API only needs `BOT_TOKEN`). Saved in `.env` for MTProto/client tooling or future features.
+\*Required for `telegram_account.py`. Not used by `bot.py` (Bot API only needs `BOT_TOKEN`).
