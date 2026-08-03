@@ -29,6 +29,16 @@ pip3 install --user -r requirements.txt
 
 ### Running the bot
 
+Credentials live in `.env` (gitignored). Copy `.env.example` if needed:
+
+```bash
+cp .env.example .env   # then edit values
+set -a && source .env && set +a
+python3 bot.py
+```
+
+Or export manually:
+
 ```bash
 export BOT_TOKEN="your-telegram-bot-token"
 python3 bot.py
@@ -61,3 +71,7 @@ Note: the Docker build will fail at the AndResGuard download step unless the Doc
 | Variable | Required | Description |
 |----------|----------|-------------|
 | `BOT_TOKEN` | Yes | Telegram bot token from BotFather |
+| `TG_API_ID` | No* | Telegram API ID from [my.telegram.org](https://my.telegram.org) |
+| `TG_API_HASH` | No* | Telegram API hash from [my.telegram.org](https://my.telegram.org) |
+
+\*Not used by `bot.py` today (Bot API only needs `BOT_TOKEN`). Saved in `.env` for MTProto/client tooling or future features.
