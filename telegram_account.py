@@ -90,7 +90,12 @@ async def cmd_login(_: argparse.Namespace) -> None:
             return
 
         await client.send_code_request(phone)
-        code = os.environ.get("TG_CODE", "").strip() or _prompt("Login code from Telegram")
+        print(
+            "Login code sent to your Telegram app (not SMS). "
+            "Open Telegram and check for a message from 'Telegram' with a 5-digit code.",
+            file=sys.stderr,
+        )
+        code = os.environ.get("TG_CODE", "").strip() or _prompt("Login code from Telegram app")
 
         try:
             await client.sign_in(phone=phone, code=code)
