@@ -27,12 +27,35 @@ from env_loader import load_dotenv
 
 load_dotenv()
 
-from telethon import TelegramClient, functions
-from telethon.errors import SessionPasswordNeededError
+from telethon import TelegramClient, functions, types
+from telethon.errors import (
+    SessionPasswordNeededError,
+    SendCodeUnavailableError,
+    PhoneCodeExpiredError,
+)
 from telethon.sessions import SQLiteSession
 
 SESSION_DIR = Path(__file__).resolve().parent / ".telegram"
 SESSION_PATH = str(SESSION_DIR / "session")
+LOGIN_STATE_PATH = SESSION_DIR / "login_state.json"
+
+
+def _save_login_state(phone: str, phone_code_hash: str) -> None:
+    SESSION_DIR.mkdir(parents=True, exist_ok=True)
+    LOGIN_STATE_PATH.write_text(
+        json.dumps({"phone": phone, "phone_code_hash": phone_code_hash}),
+        encoding="utf-8",
+    )
+
+
+def _load_login_state() -> dict[str, str]:
+    if not LOGIN_STATE_PATH.exists():
+        return {}
+    return json.loads(LOGIN_STATE_PATH.read_text(encoding="utf-8"))
+
+
+def _clear_login_state() -> None:
+    LOGIN_STATE_PATH.unlink(missing_ok=True)
 
 
 def _require_env(name: str) -> str:
@@ -81,6 +104,40 @@ async def _session():
         await client.disconnect()
 
 
+def _delivery_label(sent: types.auth.SentCode) -> str:
+    name = type(sent.type).__name__
+    if "Sms" in name:
+        return "SMS text message"
+    if "Call" in name:
+        return "phone call (listen for the code)"
+    if "MissedCall" in name:
+        return "missed call (last digits of caller number)"
+    if "App" in name:
+        return "Telegram app (message from 'Telegram' — not your SMS inbox)"
+    return name
+
+
+async def _send_code_prefer_sms(client: TelegramClient, phone: str) -> types.auth.SentCode:
+    """Request OTP; prefer SMS/call over in-app delivery when Telegram allows it."""
+    settings = types.CodeSettings(
+        allow_flashcall=True,
+        allow_missed_call=True,
+        allow_firebase=True,
+        allow_app_hash=False,
+    )
+    try:
+        sent = await client(
+            functions.auth.SendCodeRequest(phone, client.api_id, client.api_hash, settings)
+        )
+    except Exception:
+        sent = await client.send_code_request(phone)
+
+    if sent.phone_code_hash:
+        client._phone_code_hash[phone] = sent.phone_code_hash
+        _save_login_state(phone, sent.phone_code_hash)
+    return sent
+
+
 async def cmd_send_code(_: argparse.Namespace) -> None:
     phone = os.environ.get("TG_PHONE", "").strip() or _prompt("Phone number (international, e.g. +15551234567)")
 
@@ -90,15 +147,22 @@ async def cmd_send_code(_: argparse.Namespace) -> None:
             print(f"Already logged in as {me.first_name} (@{me.username or 'no-username'}) id={me.id}")
             return
 
-        sent = await client.send_code_request(phone)
-        delivery = type(sent.type).__name__
+        try:
+            sent = await _send_code_prefer_sms(client, phone)
+        except SendCodeUnavailableError:
+            print(
+                "Telegram rate-limited OTP for this number. Wait 30–60 minutes, then retry.\n"
+                "Or open Telegram on your phone — a previous code may still be in the 'Telegram' chat.",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+
         print(f"OTP sent to {phone}")
-        print(f"Delivery: {delivery}")
-        if "App" in delivery:
-            print("Check the Telegram app on your phone for a message from 'Telegram' (not SMS).")
-        else:
-            print("Check SMS or Telegram for your login code.")
-        print("Then run: TG_CODE=<code> python3 telegram_account.py verify-code")
+        print(f"Delivery: {_delivery_label(sent)}")
+        if sent.timeout:
+            print(f"Code valid for ~{sent.timeout} seconds.")
+        print("Reply with the code, then run:")
+        print("  TG_CODE=<code> python3 telegram_account.py verify-code")
 
 
 async def cmd_verify_code(_: argparse.Namespace) -> None:
@@ -111,20 +175,32 @@ async def cmd_verify_code(_: argparse.Namespace) -> None:
             print(f"Already logged in as {me.first_name} (@{me.username or 'no-username'}) id={me.id}")
             return
 
+        state = _load_login_state()
+        phone_code_hash = state.get("phone_code_hash")
+        if not phone_code_hash:
+            print("No pending OTP session. Run: python3 telegram_account.py send-code", file=sys.stderr)
+            sys.exit(1)
+
         try:
-            await client.sign_in(phone=phone, code=code)
+            await client.sign_in(phone=phone, code=code, phone_code_hash=phone_code_hash)
+        except PhoneCodeExpiredError:
+            print("Code expired. Run: python3 telegram_account.py login", file=sys.stderr)
+            _clear_login_state()
+            sys.exit(1)
         except SessionPasswordNeededError:
             password = os.environ.get("TG_PASSWORD", "").strip() or _prompt(
                 "Two-step verification password", secret=True
             )
             await client.sign_in(password=password)
 
+        _clear_login_state()
         me = await client.get_me()
         print(f"Logged in as {me.first_name} (@{me.username or 'no-username'}) id={me.id}")
         print(f"Session saved to {SESSION_PATH}.session")
 
 
 async def cmd_login(_: argparse.Namespace) -> None:
+    """OTP-only login (no QR). Sends code, or verifies if TG_CODE is set."""
     if os.environ.get("TG_CODE", "").strip():
         await cmd_verify_code(_)
         return
@@ -265,7 +341,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Manage a Telegram user account via MTProto")
     sub = parser.add_subparsers(dest="command", required=True)
 
-    sub.add_parser("login", help="Authenticate with phone + OTP and save session")
+    sub.add_parser("login", help="Send OTP to phone (OTP-only, no QR)")
     sub.add_parser("send-code", help="Send OTP to phone (step 1)")
     sub.add_parser("verify-code", help="Complete login with TG_CODE (step 2)")
     sub.add_parser("logout", help="Log out and remove local session")
