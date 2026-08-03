@@ -13,25 +13,9 @@ trap cleanup EXIT
 echo "==> Input APK: $INPUT_APK"
 test -f "$INPUT_APK"
 
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 CONFIG="$WORK_DIR/config.xml"
-cat > "$CONFIG" <<'EOF'
-<?xml version="1.0" encoding="UTF-8"?>
-<resproguard>
-  <issue id="property">
-    <seventzip value="false"/>
-    <metaname value="META-INF"/>
-    <keeproot value="false"/>
-    <mergeDuplicatedRes value="true"/>
-  </issue>
-  <issue id="whitelist" isactive="false"/>
-  <issue id="compress" isactive="true">
-    <path value="*.png"/>
-    <path value="*.jpg"/>
-    <path value="*.jpeg"/>
-    <path value="*.gif"/>
-  </issue>
-</resproguard>
-EOF
+cp "$ROOT/config/andresguard.xml" "$CONFIG"
 
 echo "==> Step 1: AndResGuard obfuscation"
 java -jar /opt/AndResGuard.jar "$INPUT_APK" -config "$CONFIG" -out "$OUT_DIR"

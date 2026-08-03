@@ -33,6 +33,12 @@ python3 telegram_account.py dialogs
 python3 telegram_account.py send @username "Hello"
 ```
 
+**OTP / login gotchas**
+
+- Telegram API often sends OTP to the **Telegram app only** (not SMS), especially for +91 numbers. `send-code` / `verify-code` persist `phone_code_hash` in `.telegram/login_state.json`.
+- If OTP never arrives: use **QR login** (`python3 scripts/telegram_qr_login.py`) or **session string** (`scripts/gen_session_string.py` on your device, then `python3 telegram_account.py import-session` with `TG_SESSION_STRING` in `.env`).
+- If QR login stops at 2FA: set `TG_PASSWORD` and run `python3 scripts/telegram_complete_2fa.py`.
+
 ### RAG pipeline
 
 ```bash
@@ -66,6 +72,7 @@ docker run --env-file .env apk-signer
 | `TG_API_ID` | Account | API ID from my.telegram.org |
 | `TG_API_HASH` | Account | API hash from my.telegram.org |
 | `TG_PHONE` | Login | Phone for account login |
+| `TG_SESSION_STRING` | Login | Telethon session string (import when OTP unavailable) |
 | `TG_CODE` | Login | OTP code (optional) |
 | `TG_PASSWORD` | Login | 2FA password (optional) |
 | `OPENAI_API_KEY` | RAG | LLM answer generation |

@@ -1,5 +1,7 @@
 .env
 .telegram/
+.telegram/login_state.json
+.telegram/session_string
 .rag/
 __pycache__/
 *.pyc

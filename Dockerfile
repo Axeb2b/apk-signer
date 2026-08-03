@@ -34,5 +34,6 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip3 install --no-cache-dir -r requirements.txt
 COPY bot.py env_loader.py .
+COPY config/ config/
 
 CMD ["python3", "bot.py"]

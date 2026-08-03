@@ -5,6 +5,7 @@ import subprocess
 import shutil
 import tempfile
 import logging
+from pathlib import Path
 from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, filters
 
@@ -24,6 +25,7 @@ def random_hex(n=6):
     return ''.join(random.choices(string.ascii_lowercase + string.digits, k=n))
 
 AND_RES_GUARD_JAR = "/opt/AndResGuard.jar"
+ANDRESGUARD_CONFIG = Path(__file__).resolve().parent / "config" / "andresguard.xml"
 
 async def start(update: Update, context):
     await update.message.reply_text("Send me an APK. I will obfuscate resources (AndResGuard), add random dummy, and random sign.")
@@ -34,6 +36,7 @@ async def handle_apk(update: Update, context):
     msg = await update.message.reply_text("Downloading APK...")
     file = await update.message.document.get_file()
     input_apk = f"in_{random_hex()}.apk"
+    work_dir = None
     await file.download_to_drive(input_apk)
 
     try:
@@ -43,25 +46,8 @@ async def handle_apk(update: Update, context):
         out_dir = os.path.join(work_dir, "andres_out")
         os.makedirs(out_dir, exist_ok=True)
 
-        config = """<?xml version="1.0" encoding="UTF-8"?>
-<resproguard>
-  <issue id="property">
-    <seventzip value="false"/>
-    <metaname value="META-INF"/>
-    <keeproot value="false"/>
-    <mergeDuplicatedRes value="true"/>
-  </issue>
-  <issue id="whitelist" isactive="false"/>
-  <issue id="compress" isactive="true">
-    <path value="*.png"/>
-    <path value="*.jpg"/>
-    <path value="*.jpeg"/>
-    <path value="*.gif"/>
-  </issue>
-</resproguard>"""
         config_path = os.path.join(work_dir, "config.xml")
-        with open(config_path, "w") as f:
-            f.write(config)
+        shutil.copy(ANDRESGUARD_CONFIG, config_path)
 
         subprocess.run([
             "java", "-jar", AND_RES_GUARD_JAR,
@@ -128,8 +114,10 @@ async def handle_apk(update: Update, context):
         await msg.edit_text(f"Error: {str(e)}")
         logging.exception("APK processing failed")
     finally:
-        shutil.rmtree(work_dir, ignore_errors=True)
-        os.remove(input_apk)
+        if work_dir:
+            shutil.rmtree(work_dir, ignore_errors=True)
+        if os.path.exists(input_apk):
+            os.remove(input_apk)
         await msg.delete()
 
 def main():
