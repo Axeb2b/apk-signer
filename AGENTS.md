@@ -91,6 +91,19 @@ docker run -e BOT_TOKEN=<token> apk-signer
 
 Note: the Docker build will fail at the AndResGuard download step unless the Dockerfile URL is fixed.
 
+### RAG pipeline
+
+Local retrieval-augmented generation over `documents/` using sentence-transformers + a local numpy vector index.
+
+```bash
+pip3 install --user -r requirements.txt
+python rag_cli.py ingest --reset
+python rag_cli.py query "How does APK signing work?" --show-sources
+python rag_cli.py status
+```
+
+Set `OPENAI_API_KEY` for LLM-generated answers; without it, `query` returns top retrieved chunks (extractive mode). Index is stored in `.rag/` (gitignored). Add docs to `documents/` (`.md`, `.txt`, `.py`, etc.) then re-ingest.
+
 ### Environment variables
 
 | Variable | Required | Description |
@@ -101,5 +114,7 @@ Note: the Docker build will fail at the AndResGuard download step unless the Doc
 | `TG_PHONE` | Login | Phone number for `telegram_account.py login` (international format) |
 | `TG_CODE` | Login | OTP code (optional; prompts if unset) |
 | `TG_PASSWORD` | Login | 2FA password (optional; prompts if needed) |
+| `OPENAI_API_KEY` | RAG | Enables LLM answers in `rag_cli.py query` |
+| `RAG_LLM_MODEL` | RAG | OpenAI model (default: `gpt-4o-mini`) |
 
 \*Required for `telegram_account.py`. Not used by `bot.py` (Bot API only needs `BOT_TOKEN`).

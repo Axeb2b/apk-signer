@@ -1,2 +1,5 @@
 python-telegram-bot==20.7
 telethon>=1.36.0,<2
+numpy>=1.26.0,<3
+sentence-transformers>=3.0.0,<6
+openai>=1.40.0,<2
