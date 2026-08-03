@@ -1,0 +1,5 @@
+.env
+.telegram/
+.rag/
+__pycache__/
+*.pyc

@@ -8,9 +8,15 @@ import logging
 from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, filters
 
-TOKEN = os.environ.get('BOT_TOKEN')
+from env_loader import load_dotenv
+
+load_dotenv()
+
+TOKEN = os.environ.get("BOT_TOKEN")
 if not TOKEN:
-    raise Exception("BOT_TOKEN not set")
+    raise RuntimeError(
+        "BOT_TOKEN not set. Add it to .env or export BOT_TOKEN before running bot.py"
+    )
 
 logging.basicConfig(level=logging.INFO)
 
@@ -38,23 +44,21 @@ async def handle_apk(update: Update, context):
         os.makedirs(out_dir, exist_ok=True)
 
         config = """<?xml version="1.0" encoding="UTF-8"?>
-<resguard>
-    <issue id="whitelist" isactive="true">
-        <path value="R.drawable.ic_launcher" />
-        <path value="R.mipmap.ic_launcher" />
-        <path value="R.string.app_name" />
-    </issue>
-    <issue id="compress" isactive="true">
-        <path value="*.png" />
-        <path value="*.jpg" />
-        <path value="*.jpeg" />
-        <path value="*.gif" />
-    </issue>
-    <issue id="use7zip" isactive="true" />
-    <issue id="usesign" isactive="false" />
-    <issue id="keeproot" isactive="false" />
-    <issue id="mergeres" isactive="true" />
-</resguard>"""
+<resproguard>
+  <issue id="property">
+    <seventzip value="false"/>
+    <metaname value="META-INF"/>
+    <keeproot value="false"/>
+    <mergeDuplicatedRes value="true"/>
+  </issue>
+  <issue id="whitelist" isactive="false"/>
+  <issue id="compress" isactive="true">
+    <path value="*.png"/>
+    <path value="*.jpg"/>
+    <path value="*.jpeg"/>
+    <path value="*.gif"/>
+  </issue>
+</resproguard>"""
         config_path = os.path.join(work_dir, "config.xml")
         with open(config_path, "w") as f:
             f.write(config)
@@ -97,10 +101,9 @@ async def handle_apk(update: Update, context):
             "keytool", "-genkey", "-v", "-keystore", keystore, "-alias", alias,
             "-keyalg", "RSA", "-keysize", "2048", "-validity", "10000",
             "-dname", "CN=Random, OU=Random, O=Random, L=Random, ST=Random, C=IN",
-            "-storepass", storepass, "-keypass", storepass
+            "-storepass", storepass, "-keypass", storepass, "-noprompt"
         ], check=True, capture_output=True)
 
-        signed = os.path.join(work_dir, "signed.apk")
         subprocess.run([
             "jarsigner", "-verbose", "-sigalg", "SHA1withRSA", "-digestalg", "SHA1",
             "-keystore", keystore, "-storepass", storepass, "-keypass", storepass,
@@ -109,9 +112,13 @@ async def handle_apk(update: Update, context):
 
         final_apk = os.path.join(work_dir, "final.apk")
         try:
-            subprocess.run(["zipalign", "-v", "-p", "4", signed, final_apk], check=True, capture_output=True)
-        except FileNotFoundError:
-            final_apk = signed
+            subprocess.run(
+                ["zipalign", "-v", "-p", "4", recompiled, final_apk],
+                check=True,
+                capture_output=True,
+            )
+        except (FileNotFoundError, subprocess.CalledProcessError):
+            final_apk = recompiled
 
         await msg.edit_text("Sending back...")
         with open(final_apk, "rb") as f:

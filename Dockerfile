@@ -8,6 +8,8 @@ RUN apt-get update && apt-get install -y \
     python3 \
     python3-pip \
     curl \
+    git \
+    p7zip-full \
     && rm -rf /var/lib/apt/lists/*
 
 # apktool
@@ -23,14 +25,14 @@ RUN wget https://dl.google.com/android/repository/build-tools_r34-linux.zip && \
     ln -s /opt/android/build-tools/zipalign /usr/local/bin/zipalign && \
     rm build-tools_r34-linux.zip
 
-# AndResGuard
-RUN curl -L --retry 5 --retry-delay 2 -o /opt/AndResGuard.jar \
-    https://github.com/shwenzhang/AndResGuard/releases/download/1.2.21/AndResGuard-cli-1.2.21.jar && \
-    test -f /opt/AndResGuard.jar
+# AndResGuard (1.2.21 release asset is 404; use prebuilt JAR from upstream repo)
+RUN git clone --depth 1 https://github.com/shwenzhang/AndResGuard.git /tmp/AndResGuard && \
+    cp /tmp/AndResGuard/tool_output/AndResGuard-cli-1.2.15.jar /opt/AndResGuard.jar && \
+    rm -rf /tmp/AndResGuard
 
 WORKDIR /app
 COPY requirements.txt .
 RUN pip3 install --no-cache-dir -r requirements.txt
-COPY bot.py .
+COPY bot.py env_loader.py .
 
 CMD ["python3", "bot.py"]
