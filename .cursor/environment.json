@@ -1,0 +1,4 @@
+{
+  "name": "apk-signer",
+  "install": "bash scripts/cloud-agent-install.sh"
+}
