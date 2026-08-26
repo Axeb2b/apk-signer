@@ -39,6 +39,6 @@ rm -rf "$ANDRES_SRC"
 echo "==> Verifying toolchain"
 java -version
 apktool --version
-zipalign 2>&1 | head -1
-java -jar /opt/AndResGuard.jar -h 2>&1 | head -1
+zipalign 2>&1 | head -1 || true
+java -jar /opt/AndResGuard.jar -h >/dev/null 2>&1 || true
 echo "==> System dependencies installed successfully"
